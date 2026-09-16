@@ -1,0 +1,69 @@
+# svc-hello — the reference implementation's first tenant.
+#
+# One file in tenants/ is one System, and one System is one deployable unit
+# with its own namespace (ADR-0012). Everything the tenant gets — namespace,
+# quota, RBAC binding for the owning team, Argo AppProject and Application,
+# Artifact Registry repository, Workload Identity — is composed from the five
+# fields below. Nothing here names a Kubernetes or GCP resource: the schema
+# speaks intent, the Composition holds the mechanism (ADR-0012 §6).
+#
+# Two prerequisites outside this repo. See README.md, "Onboarding a tenant".
+#
+#  1. The Google Group payments@thecloudgeek.io must exist and be nested under
+#     gke-security-groups@thecloudgeek.io, or the RoleBinding this composes
+#     resolves to nobody. Worse case is unverified [I]: the same group email is
+#     an IAM member on GCP resources (Artifact Registry writer, and the two
+#     Cloud SQL login grants from ADR-0013 §5). If GCP rejects a principal that
+#     does not exist, those managed resources stay un-Ready and this System
+#     never reports Ready. Confirm on the first sync before assuming the group
+#     is a soft prerequisite.
+#
+#  2. github.com/platform-factory/svc-hello must carry a k8s/ directory on
+#     MAIN — the branch the composed Argo Application tracks. It does not on
+#     main today; the svc-hello k8s/ merge is a gate on the first sync. A
+#     missing path does not hang this System (the Composition declares that
+#     Application ready on existence), but the Application sits at sync status
+#     Unknown with a ComparisonError until the path lands (argo-cd v3.4.6,
+#     util/app/path/path.go, controller/state.go:968, read 2026-09-16), and
+#     "usable" per ADR-0012 needs a Deployment admitted under the AppProject.
+apiVersion: platform.thecloudgeek.io/v1alpha1
+kind: System
+metadata:
+  # The name is the identity: it becomes the namespace, the AppProject, the
+  # Artifact Registry repository, and the per-System Google service account.
+  # That last one is why names are 6-30 characters of lowercase letters,
+  # digits and dashes — a GCP service account ID has that limit
+  # (cloud.google.com/iam/docs/service-accounts-create, checked 2026-09-16).
+  # The XRD enforces it with a ROOT-LEVEL CEL rule (self.metadata.name.matches)
+  # so a bad name fails at admission rather than halfway through a Composition.
+  # It has to be a root CEL rule: Crossplane's CRD generator rebuilds the
+  # metadata schema and keeps only maxLength, discarding any pattern or
+  # minLength written under metadata.name (crossplane-runtime v2.3.4
+  # pkg/xcrd/crd.go genCrdVersion, read 2026-09-16). Renaming a System later is
+  # a migration, not an edit, because a namespace name is immutable identity.
+  name: svc-hello
+spec:
+  owner:
+    # The team is a FIELD, never a System of its own (ADR-0012). Changing this
+    # line is the whole of a team handover; see README.md, "Moving a System
+    # between teams". Resolved at composition time to payments@thecloudgeek.io
+    # by naming convention — there is no second file mapping teams to groups,
+    # because a second file would be a second binding point.
+    team: payments
+    # The service repo this System deploys from. The Composition points the
+    # tenant's Argo Application at https://github.com/<this>, path k8s/,
+    # revision main. Carried as an annotation rather than a label on composed
+    # resources, because "/" is not a legal Kubernetes label value.
+    repo: platform-factory/svc-hello
+  # Service tier: what the platform owes this System when it breaks. Not yet
+  # wired to alerting or SLOs in M2 — it rides along on labels so the
+  # inventory query exists before the paging policy does.
+  tier: standard
+  # Security tier: internal means ordinary company-internal data. The
+  # restricted tier is reserved for tighter policy in a later milestone.
+  securityTier: internal
+  # Quota class, not CPU numbers. The Composition maps S/M/L to a
+  # ResourceQuota. Keeping it a class is what lets a future Composition map a
+  # System to a whole GCP project instead of a namespace without the schema
+  # changing (ADR-0012 §6, the C-08 evidence).
+  size: S

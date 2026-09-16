@@ -1,0 +1,91 @@
+# PREPARED, NOT LIVE. This file is the C-05 test, held one directory away
+# from where it would take effect.
+#
+# ------------------------------------------------------------------------
+# What C-05 claims
+# ------------------------------------------------------------------------
+# "Onboarding a tenant is one YAML file." The test, from the claims register:
+# onboard a SECOND tenant with one file. Data collected: lines of YAML, and
+# wall-clock from PR merge to a usable namespace. "Usable" is defined in
+# ADR-0012: the System XR reports Ready, AND a Deployment applied to the
+# namespace is admitted under the System's AppProject. Merge time comes from
+# the GitHub API; Ready time from the XR's condition timestamp.
+#
+# ------------------------------------------------------------------------
+# How to run it
+# ------------------------------------------------------------------------
+# Moving this file into tenants/ IS the test. Nothing else. No Composition
+# change, no Terraform apply, no platform-config PR:
+#
+#     git mv docs/c05-second-tenant.yaml tenants/svc-ledger.yaml
+#
+# ...open the PR, merge it, and start the clock. The `systems` Application — a
+# child of platform-config's root app-of-apps — syncs this repo with
+# `path: tenants`, and Argo CD only ever reads files under that path: it walks
+# <repo>/tenants and nothing above it (argo-cd v3.4.6 util/app/path/path.go:15,
+# reposerver/repository/repository.go:2136, read 2026-09-16). docs/ is a
+# SIBLING of tenants/, so this file is outside the Application's source
+# entirely — not merely un-recursed, and directory.recurse cannot change that.
+# The check worth making before the run is that the Application still says
+# `path: tenants` and not a repo-root path.
+#
+# After the move, replace this header with a svc-hello-style comment block.
+# Swapping the comment is bookkeeping, not a finding. If moving the file
+# requires editing any of the YAML FIELDS below, or anything outside this repo,
+# THAT is the finding, and it belongs in the M2 build log rather than being
+# quietly fixed.
+#
+# ------------------------------------------------------------------------
+# Two prerequisites, both outside this repo — settle them BEFORE the clock
+# ------------------------------------------------------------------------
+# 1. The Google Group checkout@thecloudgeek.io must exist and be nested under
+#    gke-security-groups@thecloudgeek.io. Group creation is a Workspace-admin
+#    task, deliberately outside the paved road in M2 (ADR-0012 §3). Without
+#    it the RoleBinding applies and resolves to nobody. Whether the GCP IAM
+#    members carrying the same group email (Artifact Registry writer, the two
+#    Cloud SQL login grants) apply against a group that does not exist is
+#    unverified [I] — if GCP rejects the principal, those managed resources
+#    stay un-Ready and the System XR never reports Ready, which WOULD stop the
+#    clock. Settle this before the run, not during it.
+#
+# 2. The repo github.com/platform-factory/svc-ledger must exist and contain a
+#    k8s/ directory on main.
+#
+#    This does NOT hang the System XR, and the earlier draft of this file said
+#    it did — corrected 2026-09-16. Two reasons. First, the System Composition
+#    declares the composed Argo Application ready on existence
+#    (gotemplating.fn.crossplane.io/ready: "True"), deliberately, so that a
+#    platform object's readiness never depends on a tenant's git history.
+#    Second, even a health-gated Composition would not hang: argo-cd v3.4.6
+#    calls setApplicationHealth unconditionally (controller/state.go:985) and
+#    an Application with zero managed resources returns Healthy, because
+#    controller/health.go:25 starts at Healthy and the loop body never runs.
+#    A missing path produces a ComparisonError condition and sync status
+#    Unknown (controller/state.go:968, util/app/path/path.go:25) — never an
+#    unhealthy Application.
+#
+#    The repo is a prerequisite for a different reason: ADR-0012 defines a
+#    usable namespace as the System XR Ready AND a Deployment admitted under
+#    the System's AppProject, and the second half needs something to sync. A
+#    repo holding a single trivial Deployment is enough.
+#
+# ------------------------------------------------------------------------
+# Why a DIFFERENT team from svc-hello
+# ------------------------------------------------------------------------
+# C-05 itself does not care — a second tenant is a second tenant. Using
+# checkout rather than payments sets up C-06 (move svc-hello between teams)
+# without a second round of Workspace-admin work, and it proves the group
+# name really is derived from the field rather than hardcoded anywhere.
+apiVersion: platform.thecloudgeek.io/v1alpha1
+kind: System
+metadata:
+  # 10 characters, lowercase, leading letter: inside the 6-30 character GCP
+  # service account ID limit that the System name has to satisfy.
+  name: svc-ledger
+spec:
+  owner:
+    team: checkout
+    repo: platform-factory/svc-ledger
+  tier: standard
+  securityTier: internal
+  size: S

@@ -1,6 +1,239 @@
 # systems
 
-This repo holds one YAML file per tenant, each declaring a System XR (Crossplane's Composite Resource — the top-level self-service infrastructure request a tenant submits). Changes here are approved by the platform team.
+One YAML file per tenant. Each file declares a `System` — the unit of
+ownership in the Platform Factory pattern — and merging it is the entire
+onboarding process. Changes here are approved by the platform team
+(`CODEOWNERS` assigns everything to `@platform-factory/platform`), which is
+what keeps "self-service" from meaning "unreviewed".
+
+```
+tenants/                  the live tenants — one file each, synced by Argo CD
+└── svc-hello.yaml        the first tenant, owned by the payments team
+docs/
+└── c05-second-tenant.yaml  a prepared second tenant, NOT live; moving it into
+                            tenants/ is the C-05 test
+```
+
+Only `tenants/` is applied to the cluster. The `systems` Application — a child
+of `platform-config`'s root app-of-apps — sets `path: tenants`, and Argo CD
+only ever reads files under that path: it resolves `<repo>/tenants` and walks
+that directory and nothing above it (argo-cd v3.4.6,
+`util/app/path/path.go:15` and `reposerver/repository/repository.go:2136`,
+read 2026-09-16). `docs/` is a *sibling* of `tenants/`, so it is outside the
+Application's source entirely — not merely un-recursed. The `directory.recurse`
+flag would not change that either way.
+
+## What a System is
+
+**Why it exists.** A platform needs one answer to "who owns this, and what
+does it get?" Without it, ownership is spread across a namespace here, an IAM
+binding there, a CI config somewhere else, and a reorganization becomes a
+migration project.
+
+**The mental model.** A System is *one deployable unit with its own
+namespace*, and a team is *a field on it*. That is the whole of ADR-0012, and
+it is a deliberate choice against the obvious alternative (a namespace per
+team, services inside it). The difference shows up the day ownership changes:
+
+| | Team is a System | Team is a field on a System |
+|---|---|---|
+| Handover of a service | move it to another namespace: redeploy, new image path, new Argo project | edit one line |
+| What "identity binds at one point" means | nothing much | the group is resolved in one place, and the Composition rebinds it everywhere |
+
+So: `svc-hello` is a System named `svc-hello`. The `payments` team owns it.
+A team may own any number of Systems; a System has exactly one owning team.
+There is no `Team` kind, no team namespace, no team-level cloud resources — a
+team *is* a Google Group and nothing else.
+
+**The mechanism.** A `System` is a Crossplane Composite Resource (an XR — a
+custom Kubernetes object whose fields a Composition turns into real
+resources). The XRD lives in `platform-config`; Argo CD syncs this directory
+into the cluster; Crossplane's Composition reads the five fields below and
+materializes everything the tenant gets. Nothing in this repo names a
+Kubernetes or GCP resource. The schema speaks intent; the Composition holds
+the mechanism.
+
+## The schema
+
+```yaml
+apiVersion: platform.thecloudgeek.io/v1alpha1
+kind: System
+metadata:
+  name: svc-hello
+spec:
+  owner:
+    team: payments
+    repo: platform-factory/svc-hello
+  tier: standard
+  securityTier: internal
+  size: S
+```
+
+Eleven lines. That is the C-05 measurement.
+
+| Field | Means | Constraints |
+|---|---|---|
+| `metadata.name` | The System's identity. Becomes the namespace, the Argo `AppProject`, the Artifact Registry repository, the per-System Google service account, and the `system=` label on everything composed. | 6–30 characters, lowercase letters/digits/dashes, leading letter. The floor of 6 and the ceiling of 30 come from GCP's service account ID limit; the character set is the intersection of that with a Kubernetes namespace name. Enforced at admission by a **root-level CEL rule** on the XRD (`self.metadata.name.matches(...)`), not by a `pattern` under `metadata.name` — Crossplane's CRD generator rebuilds the metadata schema and keeps only `maxLength`, silently discarding `pattern` and `minLength` (crossplane-runtime v2.3.4 `pkg/xcrd/crd.go` `genCrdVersion`, which crossplane 2.3.5 pins; read 2026-09-16). Root-level `x-kubernetes-validations` *is* copied verbatim, and Kubernetes always exposes `metadata.name` at the CEL root. Written the other way, a 4-character name would be admitted and fail halfway through the Composition at service-account creation. |
+| `spec.owner.team` | The owning team, as a bare name. Resolved by convention to `<team>@thecloudgeek.io` at composition time — there is no second file mapping teams to groups, because a second file would be a second binding point. | Must be a valid Google Group local-part *and* a valid Kubernetes label value. The XRD enforces the intersection. |
+| `spec.owner.repo` | The service's GitHub repo, `org/name`. The Composition points the tenant's Argo `Application` at `https://github.com/<repo>`, path `k8s/`, revision `main`. | Carried as an annotation, not a label, on composed resources: `/` is not a legal label value. |
+| `spec.tier` | Service tier — what the platform owes this System when it breaks. `standard` or `critical`. | In M2 it rides along on labels. The inventory query exists before the paging policy does, on purpose. |
+| `spec.securityTier` | Data sensitivity. `internal` or `restricted`. | `restricted` is reserved for tighter policy in a later milestone; both values are accepted today. |
+| `spec.size` | Quota class the Composition maps to a `ResourceQuota`. `S`, `M` or `L`. | A class, never CPU numbers. That is what lets a future Composition map a System to a whole GCP project — which has no `ResourceQuota` but still has a size class — without the schema changing. |
+
+## What one file materializes
+
+Read this as "what a tenant gets", not as an API you write against. The
+authoritative list is the System Composition in `platform-config`:
+
+- a **namespace** named after the System, labelled with system, team, tier
+  and security tier;
+- a **`ResourceQuota`** from the size class;
+- a **`RoleBinding`** giving the team's Google Group namespace-admin rights;
+- an Argo CD **`AppProject`** scoped to the team's repo and that one
+  namespace, plus an **`Application`** syncing the repo's `k8s/` directory
+  into it;
+- an **Artifact Registry repository** named after the System, with the team's
+  group granted write access — this is where the service's images live;
+- a **Google service account** for the System plus the Workload Identity
+  binding that lets the namespace's Kubernetes service account act as it, and
+  the Cloud SQL client roles that make IAM database login work.
+
+## Onboarding a tenant
+
+One file, one PR — preceded by two prerequisites that live outside this repo
+and are settled once, before the PR:
+
+1. Ask a Workspace admin to create the team's Google Group and nest it under
+   `gke-security-groups@thecloudgeek.io` — see the next section. Without it
+   the `RoleBinding` applies and binds to nobody. Whether the GCP IAM members
+   that also carry the group email — Artifact Registry writer, and the two
+   Cloud SQL login grants — apply against a group that does not exist is
+   **unverified** [I]; if GCP rejects the principal, those managed resources
+   stay un-`Ready` and the `System` XR never reports `Ready`. Treat the group
+   as a hard prerequisite, not a soft one, and confirm this on the first sync.
+2. Make sure the service repo named in `spec.owner.repo` exists and has a
+   `k8s/` directory on `main`. A missing repo or path does not hang the
+   `System` — the composed Argo `Application` is declared ready on existence —
+   but the `Application` sits at sync status `Unknown` with a
+   `ComparisonError` until the path lands (argo-cd v3.4.6,
+   `util/app/path/path.go`, `controller/state.go:968`, read 2026-09-16), and
+   the "usable" bar below needs something to sync.
+3. Copy `tenants/svc-hello.yaml` to `tenants/<system-name>.yaml` and edit the
+   five fields.
+4. Open a PR. The platform team reviews it (CODEOWNERS).
+5. On merge, Argo CD syncs the file, Crossplane composes the tenant, and the
+   namespace is usable when the `System` reports `Ready` and a `Deployment`
+   applied to the namespace is admitted under its `AppProject`.
+
+Nothing else is a step, and steps 3–5 are the whole of what C-05 times. If
+onboarding ever requires a second file in this repo, a `platform-config`
+change, or a Terraform apply, that is a regression against claim C-05 and
+belongs in the build log.
+
+## Moving a System between teams
+
+Edit `spec.owner.team`. That is the whole procedure, and it is claim C-06's
+test.
+
+Changing that one field changes exactly six things, all inside the
+Composition:
+
+1. the `RoleBinding` subjects in the namespace,
+2. the `AppProject`'s roles,
+3. the `team` label on everything the System materializes,
+4. the group's IAM member on the System's Artifact Registry repository,
+5. the project IAM member granting the group `roles/cloudsql.client`,
+6. the project IAM member granting the group `roles/cloudsql.instanceUser`.
+
+ADR-0012 §4 lists the first four. Items 5 and 6 come from ADR-0013 §5, written
+later: humans reach their database through their own Google identity, which
+means the System grants the team's group the two Cloud SQL login roles. The
+two ADRs disagree on the count; ADR-0013 is the newer decision and the
+Composition follows it. Raised in the M2 build log so ADR-0012 gets an
+erratum rather than leaving two documents disagreeing about what C-06
+measures.
+
+One more thing carries the team and is not on that list because it is not a
+grant: the `platform-system` ConfigMap in the namespace has a `group` key, a
+derived convenience copy for humans and tooling. It is a plain string and
+updates in place. The System Composition's header comment uses this same
+numbering, so the two documents can be read against each other.
+
+Nothing else grants on the team. The namespace, the Artifact Registry
+repository, the image paths, the Argo `Application` and the service's own
+identity all keep their names, because the name is the System's — not the
+team's. The field that changes must not be the field that identifies; that is
+also why renaming a System *is* a migration, and a team handover is not.
+
+Expect **three** things to be re-created rather than updated — the Artifact
+Registry IAM member and the two project IAM members — because changing
+`member` on an IAM-member resource forces replacement rather than an update.
+`RoleBinding.subjects` and `AppProject.spec.roles` update in place. Anything
+else showing up in the "re-created" column is a finding.
+
+## Removing a System
+
+Deleting the file is **not** the clean inverse of adding it, and the
+difference is deliberate (ADR-0015).
+
+Argo CD syncs this directory with prune and self-heal, so removing a tenant
+file deletes the `System` XR, and with it everything the Composition fully
+manages: the namespace and its contents, the `ResourceQuota`, the
+`RoleBinding`, the Kubernetes and Google service accounts, every IAM member,
+the `AppProject` and the `Application`.
+
+It does **not** delete the durable resources — the Artifact Registry
+repository, and any Cloud SQL instance or database the tenant claimed. Those
+are composed with `managementPolicies` that omit `Delete`, plus deletion
+protection on both the provider and the Cloud SQL side (ADR-0015 §1), so a
+claim deletion cannot remove them. Removing them for real is a deliberate
+`gcloud` act, performed after the claim is gone and recorded; the platform
+offers no automation for it in M2 (ADR-0015 §5). Orphans are findable: every
+durable resource carries a `system` label, and one whose `System` no longer
+exists is the list the runbook works from.
+
+Re-adding a file with the same name **adopts** the surviving repository and
+instance rather than creating a second one — the Composition sets a
+deterministic `crossplane.io/external-name` derived from the System's name
+(ADR-0015 §2). That is the same mechanism that makes a cluster rebuild adopt
+instead of duplicate, which is also why a System's name is immutable.
+
+## The one manual prerequisite
+
+**The team's Google Group must already exist, and must be nested under
+`gke-security-groups@thecloudgeek.io`.**
+
+This is a Google Workspace admin task and it is outside the paved road in M2
+— stated here rather than hidden, because it is the one step a platform
+engineer cannot do from a PR. The details that matter:
+
+- The umbrella group's name must be exactly `gke-security-groups`. GKE
+  requires that literal local part; it is not a convention.
+- Team groups are **nested groups** of the umbrella, never individual users.
+  GKE resolves a user's access by checking whether they are in a group that
+  is nested under the umbrella.
+- Both the umbrella and each team group need the "View Members" permission
+  set for group members, or GKE cannot read the membership.
+- Group names in RBAC are **case-sensitive**, and the Composition uses the
+  team field verbatim.
+- Membership changes take a few minutes to propagate, plus up to an hour of
+  credential caching. When testing a handover, expect to wait.
+- Deleting one of these groups later breaks every binding that references it.
+
+Once a team group is nested under the umbrella, its members can *authenticate*
+to the cluster and see nothing. GKE requires `container.clusters.get` before
+any RBAC is evaluated, and `platform-bootstrap`'s layer 0 grants
+`roles/container.clusterViewer` once, to the umbrella group. So the
+*authentication* hop is granted once and a team handover never touches it —
+the only cloud IAM a handover does move is the three grants the Composition
+manages itself (Artifact Registry writer, and the two Cloud SQL login roles),
+and the platform's own provider identity holds project-IAM-admin under an IAM
+Condition that permits exactly those two Cloud SQL roles and nothing else
+(ADR-0013 §6).
+
+Bringing group creation inside the platform is possible later — the provider
+family has a `cloudidentity.Group` kind — but that provider is not installed
+and the Cloud Identity API is off.
 
 ## Part of the Platform Factory
 
@@ -12,4 +245,9 @@ This repo is built out in **M2**.
 
 ## Status
 
-**Status:** scaffold — build in progress, following the pre-registered build plan in the design seed repo.
+**Status:** M2 in progress. The first tenant (`tenants/svc-hello.yaml`) is
+authored, and a second (`docs/c05-second-tenant.yaml`) is prepared but not
+live. Neither has been applied to a cluster yet: the `System` XRD and
+Composition land in `platform-config` in the same milestone, and the first
+real sync is what grades C-05. Results go to the design seed repo's
+`docs/build-log/m2-paved-road.md`.
