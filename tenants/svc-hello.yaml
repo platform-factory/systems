@@ -49,7 +49,7 @@ spec:
     # between teams". Resolved at composition time to payments@thecloudgeek.io
     # by naming convention — there is no second file mapping teams to groups,
     # because a second file would be a second binding point.
-    team: payments
+    team: checkout
     # The service repo this System deploys from. The Composition points the
     # tenant's Argo Application at https://github.com/<this>, path k8s/,
     # revision main. Carried as an annotation rather than a label on composed
