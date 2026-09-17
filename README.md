@@ -240,15 +240,28 @@ a move composes three new members and Crossplane garbage-collects the three old
 ones — nothing is asked to mutate what it cannot. After that synced, the three
 `-checkout` members reported `Ready=True`.
 
-**What is not finished.** The three original members — composed before the
-fix, so with no team in their object names — have been
-stuck DELETING since 17:23:33: the refused in-place update had already
-rewritten their spec, so their delete path now runs with an empty project and
-fails. Cloud still grants `payments` the two Cloud SQL roles and registry
-write. Clearing that needs manual cleanup — remove the finalizers, then
-`gcloud … remove-iam-policy-binding` — and then **one clean re-run of the move
-under the fixed Composition, which has NOT YET BEEN DONE.** Until it has, C-06
-has a measured first run and no measured second one.
+**The clean re-run (2026-09-17).** The move was run again, the other way
+(`checkout` → `payments`), under the fixed Composition: one file, one line,
+merged 11:42:01; by 11:43:56 the three `-payments` members were Ready, the
+three `-checkout` members had been garbage-collected with no stuck deletes,
+and the cloud policy showed `payments` on both Cloud SQL roles and the
+registry. **One file, three re-created, 1m55s from merge.** The stale
+`payments` grants the first run left behind were removed by hand that morning.
+
+**What the first run's leftovers did overnight — and the hazard they
+exposed.** The three original members, stuck deleting, eventually finished on
+their own. Because the refused update had already rewritten their spec to
+`checkout`, what they deleted was the *checkout* grants — while every
+`-checkout` member object, in both tenant namespaces, still said Ready. The
+mechanism is general: a project-level IAM binding is identified by role and
+member, and two Systems owned by the same team each compose their own object
+for that one cloud grant. Remove either and the grant is gone for both until
+the provider's next poll restores it. The clean re-run reproduced it on
+demand: moving `svc-hello` away from `checkout` took `svc-ledger`'s Cloud SQL
+grants with it for about five minutes. **If you move a System between teams
+today, expect the team it leaves to lose database login on its other Systems
+for a few minutes.** The fix — a per-System IAM Condition on those grants —
+is decided in the design seed's ADR-0016 §2 and is not built yet.
 
 **The prediction, and how it scored.** The Composition's header predicted, in
 writing and before the run: files touched 1, re-created 3 — the registry IAM
@@ -345,8 +358,9 @@ really does resolve **nested** Google Groups from a real login, which is the
 mechanism this whole design rests on [C]. But the second test identity — a
 non-owner, external consumer account, nested two groups deep — was refused at
 the cluster's DNS endpoint with HTTP 403, and `gcloud container clusters
-describe` said `Required "container.clusters.get"`, a full day after the
-membership was added. Google's own Cloud Asset analyzer disagrees: `gcloud
+describe` said `Required "container.clusters.get"`, and was still refused on
+2026-09-17, about nineteen hours after the membership was added — so this is
+not propagation delay. Google's own Cloud Asset analyzer disagrees: `gcloud
 asset analyze-iam-policy --expand-groups` lists that account as holding
 `container.clusters.get` through `group:gke-security-groups@` on
 `roles/container.clusterViewer`. Policy Troubleshooter answers
@@ -374,10 +388,12 @@ This repo is built out in **M2**.
 4m08s); `svc-hello` was then moved from `payments` to `checkout` as the C-06
 test by changing one line.
 
-C-05 has a clean result. **C-06 does not yet:** the first run left three cloud
-IAM members stale and then, after the fix, stuck DELETING, and the clean re-run
-of the move under the fixed Composition has not been done. Both are written up
-in *Moving a System between teams* above.
+C-05 has a clean result. C-06 has two runs: the first moved nothing in the
+cloud while reporting success, and forced a design change; the clean re-run on
+2026-09-17 did what was predicted — one file, three grants re-created, under
+two minutes — and exposed the shared-grant hazard. `svc-hello` is owned by
+`payments` again as of that re-run. All of it is written up in *Moving a
+System between teams* above; grades are in the design seed's build log.
 
 Two prerequisites the first sync leaned on are still manual and still outside
 this repo: the Google Groups, and one `gcloud sql users create` per database
