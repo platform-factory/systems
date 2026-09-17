@@ -351,11 +351,13 @@ and the platform's own provider identity holds project-IAM-admin under an IAM
 Condition that permits exactly those two Cloud SQL roles and nothing else
 (ADR-0013 §6).
 
-**Half of that was confirmed on 2026-09-16 and half is unresolved.** With a
-real user token, `kubectl auth whoami` returned groups
-`[gke-security-groups@, payments@, checkout@, system:authenticated]` — so GKE
-really does resolve **nested** Google Groups from a real login, which is the
-mechanism this whole design rests on [C]. But the second test identity — a
+**This is less settled than it first looked.** With a real user token,
+`kubectl auth whoami` returned groups
+`[gke-security-groups@, payments@, checkout@, system:authenticated]` — so GKE's
+Google Groups integration does put a real user's groups into the token [C].
+But that user created all three groups and is a *direct* member of each, so
+it never tested the thing this design rests on: access inherited through a
+**nested** group. The second test identity — a
 non-owner, external consumer account, nested two groups deep — was refused at
 the cluster's DNS endpoint with HTTP 403, and `gcloud container clusters
 describe` said `Required "container.clusters.get"`, and was still refused on
@@ -365,8 +367,14 @@ asset analyze-iam-policy --expand-groups` lists that account as holding
 `container.clusters.get` through `group:gke-security-groups@` on
 `roles/container.clusterViewer`. Policy Troubleshooter answers
 `MEMBERSHIP_UNKNOWN_INFO_DENIED`. **The analyzer says yes and the runtime says
-no, and that is UNRESOLVED** — so treat "nest the group and the member gets in"
-as verified for a normal org identity and open for an external account.
+no, and that is UNRESOLVED.** Checked again on 2026-09-17 with no cluster
+running: IAM refuses that account even a plain `gcloud projects describe`, so
+the refusal is IAM's, not the cluster's. It is the only identity that depends
+on nesting, and it is also external, so the two causes cannot be separated
+yet. **Treat "nest the group and the member gets in" as unproven for
+everyone.** If a developer who is only in a team group cannot reach the
+cluster, the fallback ADR-0012 §5 names is to grant the cluster role to each
+team group directly.
 
 Bringing group creation inside the platform is possible later — the provider
 family has a `cloudidentity.Group` kind — but that provider is not installed
