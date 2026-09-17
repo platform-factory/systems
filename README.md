@@ -8,10 +8,8 @@ what keeps "self-service" from meaning "unreviewed".
 
 ```
 tenants/                  the live tenants — one file each, synced by Argo CD
-└── svc-hello.yaml        the first tenant, owned by the payments team
-docs/
-└── c05-second-tenant.yaml  a prepared second tenant, NOT live; moving it into
-                            tenants/ is the C-05 test
+├── svc-hello.yaml        the first tenant; owned by checkout since the C-06 move
+└── svc-ledger.yaml       the second tenant, onboarded as the C-05 test
 ```
 
 Only `tenants/` is applied to the cluster. The `systems` Application — a child
@@ -19,9 +17,11 @@ of `platform-config`'s root app-of-apps — sets `path: tenants`, and Argo CD
 only ever reads files under that path: it resolves `<repo>/tenants` and walks
 that directory and nothing above it (argo-cd v3.4.6,
 `util/app/path/path.go:15` and `reposerver/repository/repository.go:2136`,
-read 2026-09-16). `docs/` is a *sibling* of `tenants/`, so it is outside the
-Application's source entirely — not merely un-recursed. The `directory.recurse`
-flag would not change that either way.
+read 2026-09-16). A sibling directory such as `docs/` is outside the
+Application's source entirely — not merely un-recursed — and the
+`directory.recurse` flag would not change that either way. That is what let the
+second tenant be prepared in `docs/` and then moved into `tenants/`: the C-05
+PR was a **rename and nothing else**, one file changed.
 
 ## What a System is
 
@@ -40,8 +40,10 @@ team, services inside it). The difference shows up the day ownership changes:
 | Handover of a service | move it to another namespace: redeploy, new image path, new Argo project | edit one line |
 | What "identity binds at one point" means | nothing much | the group is resolved in one place, and the Composition rebinds it everywhere |
 
-So: `svc-hello` is a System named `svc-hello`. The `payments` team owns it.
-A team may own any number of Systems; a System has exactly one owning team.
+So: `svc-hello` is a System named `svc-hello`. The `checkout` team owns it —
+`payments` did until the C-06 move on 2026-09-16, and that move was one line in
+one file. A team may own any number of Systems; a System has exactly one owning
+team.
 There is no `Team` kind, no team namespace, no team-level cloud resources — a
 team *is* a Google Group and nothing else.
 
@@ -59,17 +61,19 @@ the mechanism.
 apiVersion: platform.thecloudgeek.io/v1alpha1
 kind: System
 metadata:
-  name: svc-hello
+  name: svc-ledger
 spec:
   owner:
-    team: payments
-    repo: platform-factory/svc-hello
+    team: checkout
+    repo: platform-factory/svc-ledger
   tier: standard
   securityTier: internal
   size: S
 ```
 
-Eleven lines. That is the C-05 measurement.
+Eleven lines. That is the C-05 measurement, and that is the whole of
+`tenants/svc-ledger.yaml` once you strip the 80 lines of explanatory comment
+the file also carries.
 
 | Field | Means | Constraints |
 |---|---|---|
@@ -88,7 +92,11 @@ authoritative list is the System Composition in `platform-config`:
 - a **namespace** named after the System, labelled with system, team, tier
   and security tier;
 - a **`ResourceQuota`** from the size class;
-- a **`RoleBinding`** giving the team's Google Group namespace-admin rights;
+- **two `RoleBinding`s** for the team's Google Group — the built-in `admin`
+  role, and Crossplane's `crossplane-edit`, without which the team could not
+  create the very `Database` claim the paved road exists to offer;
+- a **`platform-system` ConfigMap** holding the team and group as plain
+  strings, for humans and tooling to read;
 - an Argo CD **`AppProject`** scoped to the team's repo and that one
   namespace, plus an **`Application`** syncing the repo's `k8s/` directory
   into it;
@@ -105,12 +113,16 @@ and are settled once, before the PR:
 
 1. Ask a Workspace admin to create the team's Google Group and nest it under
    `gke-security-groups@thecloudgeek.io` — see the next section. Without it
-   the `RoleBinding` applies and binds to nobody. Whether the GCP IAM members
-   that also carry the group email — Artifact Registry writer, and the two
-   Cloud SQL login grants — apply against a group that does not exist is
-   **unverified** [I]; if GCP rejects the principal, those managed resources
-   stay un-`Ready` and the `System` XR never reports `Ready`. Treat the group
-   as a hard prerequisite, not a soft one, and confirm this on the first sync.
+   the `RoleBinding` applies and binds to nobody. With the group in place, the
+   per-System Google service account and all four `ProjectIAMMember`s — the two
+   Cloud SQL login grants among them — reported `Synced=True` on the first
+   reconcile on 2026-09-16 [C]. The Artifact Registry writer member, a
+   different kind composed after the repository itself, is not part of that
+   observation; it reached ready along with everything else by the time the
+   `System` went Ready at 16:55:04 [I]. What is still **unverified** is the other direction:
+   nothing has yet asked GCP to accept a group principal that does not exist,
+   so "the group is a hard prerequisite" is still the instruction rather than
+   a measured consequence. Do the groups first.
 2. Make sure the service repo named in `spec.owner.repo` exists and has a
    `k8s/` directory on `main`. A missing repo or path does not hang the
    `System` — the composed Argo `Application` is declared ready on existence —
@@ -129,6 +141,26 @@ Nothing else is a step, and steps 3–5 are the whole of what C-05 times. If
 onboarding ever requires a second file in this repo, a `platform-config`
 change, or a Terraform apply, that is a regression against claim C-05 and
 belongs in the build log.
+
+**Timed on 2026-09-16, for `svc-ledger`:** merged 17:02:13 → `System` object
+created 17:05:10 → `System` Ready 17:06:21. **Merge → Ready: 4m08s**, and most
+of that is Argo CD's roughly three-minute repository poll rather than anything
+the platform does. A Running pod in the new namespace, under its own
+`AppProject`, followed by about 17:07 — a placeholder unprivileged nginx,
+pulled through the Docker Hub remote, since `svc-ledger` exists to test
+onboarding rather than to run anything — so **merge → a tenant that can run a
+workload is roughly five minutes**. From that one file came: the namespace, the `ResourceQuota`, two
+`RoleBinding`s, the Kubernetes service account, the `AppProject` and
+`Application` (both Synced/Healthy), the Google service account and its
+Workload Identity binding, four project IAM members, and the Artifact Registry
+repository with its writer member.
+
+The first tenant, `svc-hello`, took 5m56s (created 16:49:08, Ready 16:55:04) —
+slower because it absorbed two first-run problems the second tenant never saw:
+a CRD that was not yet installed, and the namespace-ordering race
+that the System Composition's ordering gate now closes. That difference is the
+honest reading of C-05: the *second* tenant is the measurement, because the
+first one is also the platform's own bring-up.
 
 ## Moving a System between teams
 
@@ -165,11 +197,66 @@ identity all keep their names, because the name is the System's — not the
 team's. The field that changes must not be the field that identifies; that is
 also why renaming a System *is* a migration, and a team handover is not.
 
-Expect **three** things to be re-created rather than updated — the Artifact
-Registry IAM member and the two project IAM members — because changing
-`member` on an IAM-member resource forces replacement rather than an update.
-`RoleBinding.subjects` and `AppProject.spec.roles` update in place. Anything
-else showing up in the "re-created" column is a finding.
+### What actually happens, measured 2026-09-16
+
+The move ran for real: `svc-hello` from `payments` to `checkout`, one file
+changed, one insertion, one deletion, merged 17:14:26.
+
+**The in-cluster carriers moved in place, and quickly.** By 17:15:41 — 75
+seconds after the merge, because Argo CD's poll happened to be quick — the
+namespace `team` label, both `RoleBinding` subjects, the `AppProject` role
+groups, the `platform-system` ConfigMap's `team`/`group` keys and the registry
+object's `labels.team` all read `checkout`. The `RoleBinding`s
+kept their original `creationTimestamp`, so they really were updated rather
+than replaced. Access followed: testing by impersonation (which tests RBAC, not
+the identity provider), `payments` could list pods in `svc-hello` before and
+not after, `checkout` the other way round.
+
+**The three cloud IAM carriers did not move, and nothing said so.** This is the
+finding C-06 exists to produce, so it is written out plainly. The three IAM
+members — Artifact Registry writer, `roles/cloudsql.client`,
+`roles/cloudsql.instanceUser` — kept their object names, so upjet was asked to
+change `member` on an existing external resource. (upjet is the code generator
+that wraps the Terraform GCP provider as a Crossplane provider — it is what
+`provider-upjet-gcp` is.) An IAM member cannot change
+its member in place; Terraform would replace it; and **upjet does not perform
+replacements.** The update was refused, permanently:
+
+```
+async update failed: refuse to update the external resource because the following update requires replacing it
+```
+
+The external names still said `payments`, and the registry still granted write
+access to `payments` only. Worse than the failure is how quiet it was: a
+managed resource's `Ready` condition is not re-evaluated by a failed update, so
+all three stayed `Ready=True` from their original creation and only `Synced`
+went False. `function-auto-ready` judges Ready, not Synced — so the `System`
+reported `Ready=True` throughout, and Argo CD showed nothing wrong. **By every
+signal the platform exposes, the move had succeeded.** Re-created: 0. Stuck: 3.
+
+**The fix makes "re-created" literal.** `platform-config` PR #6 puts the team
+into the object *name* and composition-resource-name of exactly those three, so
+a move composes three new members and Crossplane garbage-collects the three old
+ones — nothing is asked to mutate what it cannot. After that synced, the three
+`-checkout` members reported `Ready=True`.
+
+**What is not finished.** The three original members — composed before the
+fix, so with no team in their object names — have been
+stuck DELETING since 17:23:33: the refused in-place update had already
+rewritten their spec, so their delete path now runs with an empty project and
+fails. Cloud still grants `payments` the two Cloud SQL roles and registry
+write. Clearing that needs manual cleanup — remove the finalizers, then
+`gcloud … remove-iam-policy-binding` — and then **one clean re-run of the move
+under the fixed Composition, which has NOT YET BEEN DONE.** Until it has, C-06
+has a measured first run and no measured second one.
+
+**The prediction, and how it scored.** The Composition's header predicted, in
+writing and before the run: files touched 1, re-created 3 — the registry IAM
+member and the two project IAM members. It was right about *which three* and
+wrong about *how*: it assumed a replacement would happen, and the provider
+refuses to replace. `RoleBinding.subjects` and `AppProject.spec.roles` did
+update in place as predicted. Anything else showing up in the "re-created"
+column is still a finding.
 
 ## Removing a System
 
@@ -205,7 +292,27 @@ instead of duplicate, which is also why a System's name is immutable.
 
 This is a Google Workspace admin task and it is outside the paved road in M2
 — stated here rather than hidden, because it is the one step a platform
-engineer cannot do from a PR. The details that matter:
+engineer cannot do from a PR.
+
+**How it was actually done on 2026-09-16**, because the commands are not quite
+the obvious ones. The Cloud Identity API had to be enabled by hand first
+(`gcloud services enable cloudidentity.googleapis.com`), and then **every**
+`gcloud identity groups` call needed an explicit `--billing-project`: Cloud
+Identity bills a quota project, and this identity's *default* quota project
+resolves to a project it cannot use, so without the flag the calls fail for a
+reason that has nothing to do with groups. The full command list lives in
+`platform-bootstrap`'s README, Runbook step 5A. Three groups were created —
+`gke-security-groups@`, `payments@`, `checkout@` — with the two team groups
+nested inside the umbrella.
+
+One wrinkle to clean up after: creating the umbrella group makes the creator a
+direct `OWNER`/`MEMBER` of it, and GKE's rule for `gke-security-groups` is that
+it contains groups only. That direct membership was still in place at the end
+of the day and should be removed. A related trap, learned the same day: a
+project **owner** cannot be the test subject for any of this, because IAM
+grants an owner everything regardless of what RBAC says.
+
+The details that matter:
 
 - The umbrella group's name must be exactly `gke-security-groups`. GKE
   requires that literal local part; it is not a convention.
@@ -231,6 +338,22 @@ and the platform's own provider identity holds project-IAM-admin under an IAM
 Condition that permits exactly those two Cloud SQL roles and nothing else
 (ADR-0013 §6).
 
+**Half of that was confirmed on 2026-09-16 and half is unresolved.** With a
+real user token, `kubectl auth whoami` returned groups
+`[gke-security-groups@, payments@, checkout@, system:authenticated]` — so GKE
+really does resolve **nested** Google Groups from a real login, which is the
+mechanism this whole design rests on [C]. But the second test identity — a
+non-owner, external consumer account, nested two groups deep — was refused at
+the cluster's DNS endpoint with HTTP 403, and `gcloud container clusters
+describe` said `Required "container.clusters.get"`, a full day after the
+membership was added. Google's own Cloud Asset analyzer disagrees: `gcloud
+asset analyze-iam-policy --expand-groups` lists that account as holding
+`container.clusters.get` through `group:gke-security-groups@` on
+`roles/container.clusterViewer`. Policy Troubleshooter answers
+`MEMBERSHIP_UNKNOWN_INFO_DENIED`. **The analyzer says yes and the runtime says
+no, and that is UNRESOLVED** — so treat "nest the group and the member gets in"
+as verified for a normal org identity and open for an external account.
+
 Bringing group creation inside the platform is possible later — the provider
 family has a `cloudidentity.Group` kind — but that provider is not installed
 and the Cloud Identity API is off.
@@ -245,9 +368,18 @@ This repo is built out in **M2**.
 
 ## Status
 
-**Status:** M2 in progress. The first tenant (`tenants/svc-hello.yaml`) is
-authored, and a second (`docs/c05-second-tenant.yaml`) is prepared but not
-live. Neither has been applied to a cluster yet: the `System` XRD and
-Composition land in `platform-config` in the same milestone, and the first
-real sync is what grades C-05. Results go to the design seed repo's
-`docs/build-log/m2-paved-road.md`.
+**Status:** M2 — live since 2026-09-16. Both tenants are synced and Ready.
+`svc-hello` was the first System the platform ever composed (Ready 16:55:04);
+`svc-ledger` was onboarded as the C-05 test by merging one file (merge → Ready
+4m08s); `svc-hello` was then moved from `payments` to `checkout` as the C-06
+test by changing one line.
+
+C-05 has a clean result. **C-06 does not yet:** the first run left three cloud
+IAM members stale and then, after the fix, stuck DELETING, and the clean re-run
+of the move under the fixed Composition has not been done. Both are written up
+in *Moving a System between teams* above.
+
+Two prerequisites the first sync leaned on are still manual and still outside
+this repo: the Google Groups, and one `gcloud sql users create` per database
+while provider-upjet-gcp #1000 is open. Results and grades go to the design
+seed repo's `docs/build-log/m2-paved-road.md`.
