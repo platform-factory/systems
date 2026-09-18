@@ -371,10 +371,23 @@ no, and that is UNRESOLVED.** Checked again on 2026-09-17 with no cluster
 running: IAM refuses that account even a plain `gcloud projects describe`, so
 the refusal is IAM's, not the cluster's. It is the only identity that depends
 on nesting, and it is also external, so the two causes cannot be separated
-yet. **Treat "nest the group and the member gets in" as unproven for
-everyone.** If a developer who is only in a team group cannot reach the
-cluster, the fallback ADR-0012 §5 names is to grant the cluster role to each
-team group directly.
+yet. **Explained later the same day:** added *directly* to the umbrella group, the
+same account was let in within 23 seconds. Google documents why the nested
+route failed — *"external nested members are filtered out"* of an internal
+parent group (Workspace Admin Help, "Add a group to another group"). So:
+
+- **Put people in team groups with their domain identity.** A contractor or
+  partner on an outside account is filtered out of `gke-security-groups@`
+  when they arrive through a team group, and will be refused at the cluster
+  with no useful message. They need a domain identity, or a direct grant.
+- **For domain users, nesting is what Google documents, and it is still not
+  positively tested here** — the only domain user so far created all three
+  groups and is a direct member of each. If a domain developer who is only in
+  a team group cannot reach the cluster, the fallback ADR-0012 §5 names is to
+  grant the cluster role to each team group directly.
+- **Removing someone from a group is not instant.** Access granted through a
+  group appeared in seconds; after the membership was removed it lingered for
+  a while (the design seed's M2 build log has the measurement).
 
 Bringing group creation inside the platform is possible later — the provider
 family has a `cloudidentity.Group` kind — but that provider is not installed
