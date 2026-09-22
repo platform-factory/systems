@@ -1,42 +1,19 @@
-# PREPARED, NOT LIVE. This file is the C-05 test, held one directory away
-# from where it would take effect.
+# svc-ledger — the reference implementation's second tenant.
+#
+# One file in tenants/ is one System, and one System is one deployable unit
+# with its own namespace (ADR-0012). Everything the tenant gets is composed
+# from the five fields below; nothing here names a Kubernetes or GCP resource.
+#
+# This file was the C-05 test ("onboarding a tenant is one YAML file"). Moving
+# it from docs/ into tenants/ WAS the test: commit dfdfd03 is a pure rename,
+# zero bytes changed, merged as PR #2 at 17:02:13 UTC. The System reported
+# Ready at 17:06:21 — merge → Ready 4m08s. Method and result: README.md,
+# "Onboarding a tenant"; the grade (HELD) is in the design seed's build log,
+# docs/build-log/m2-paved-road.md. The header this file carried while it was
+# still prepared is in git: `git show dfdfd03^:docs/c05-second-tenant.yaml`.
 #
 # ------------------------------------------------------------------------
-# What C-05 claims
-# ------------------------------------------------------------------------
-# "Onboarding a tenant is one YAML file." The test, from the claims register:
-# onboard a SECOND tenant with one file. Data collected: lines of YAML, and
-# wall-clock from PR merge to a usable namespace. "Usable" is defined in
-# ADR-0012: the System XR reports Ready, AND a Deployment applied to the
-# namespace is admitted under the System's AppProject. Merge time comes from
-# the GitHub API; Ready time from the XR's condition timestamp.
-#
-# ------------------------------------------------------------------------
-# How to run it
-# ------------------------------------------------------------------------
-# Moving this file into tenants/ IS the test. Nothing else. No Composition
-# change, no Terraform apply, no platform-config PR:
-#
-#     git mv docs/c05-second-tenant.yaml tenants/svc-ledger.yaml
-#
-# ...open the PR, merge it, and start the clock. The `systems` Application — a
-# child of platform-config's root app-of-apps — syncs this repo with
-# `path: tenants`, and Argo CD only ever reads files under that path: it walks
-# <repo>/tenants and nothing above it (argo-cd v3.4.6 util/app/path/path.go:15,
-# reposerver/repository/repository.go:2136, read 2026-09-16). docs/ is a
-# SIBLING of tenants/, so this file is outside the Application's source
-# entirely — not merely un-recursed, and directory.recurse cannot change that.
-# The check worth making before the run is that the Application still says
-# `path: tenants` and not a repo-root path.
-#
-# After the move, replace this header with a svc-hello-style comment block.
-# Swapping the comment is bookkeeping, not a finding. If moving the file
-# requires editing any of the YAML FIELDS below, or anything outside this repo,
-# THAT is the finding, and it belongs in the M2 build log rather than being
-# quietly fixed.
-#
-# ------------------------------------------------------------------------
-# Two prerequisites, both outside this repo — settle them BEFORE the clock
+# Two prerequisites, both outside this repo — both settled before the run
 # ------------------------------------------------------------------------
 # 1. The Google Group checkout@thecloudgeek.io must exist and be nested under
 #    gke-security-groups@thecloudgeek.io. Group creation is a Workspace-admin
@@ -45,8 +22,8 @@
 #    members carrying the same group email (Artifact Registry writer, the two
 #    Cloud SQL login grants) apply against a group that does not exist is
 #    unverified [I] — if GCP rejects the principal, those managed resources
-#    stay un-Ready and the System XR never reports Ready, which WOULD stop the
-#    clock. Settle this before the run, not during it.
+#    stay un-Ready and the System XR never reports Ready, which would have
+#    stopped the clock. Settled before the run.
 #
 # 2. The repo github.com/platform-factory/svc-ledger must exist and contain a
 #    k8s/ directory on main.
@@ -73,9 +50,10 @@
 # Why a DIFFERENT team from svc-hello
 # ------------------------------------------------------------------------
 # C-05 itself does not care — a second tenant is a second tenant. Using
-# checkout rather than payments sets up C-06 (move svc-hello between teams)
-# without a second round of Workspace-admin work, and it proves the group
-# name really is derived from the field rather than hardcoded anywhere.
+# checkout rather than payments set up C-06 (move svc-hello between teams,
+# run 2026-09-16 and re-run 2026-09-17) without a second round of
+# Workspace-admin work, and it proved the group name really is derived from
+# the field rather than hardcoded anywhere.
 apiVersion: platform.thecloudgeek.io/v1alpha1
 kind: System
 metadata:
