@@ -8,7 +8,8 @@ what keeps "self-service" from meaning "unreviewed".
 
 ```
 tenants/                  the live tenants — one file each, synced by Argo CD
-├── svc-hello.yaml        the first tenant; owned by checkout since the C-06 move
+├── svc-hello.yaml        the first tenant; owned by payments (C-06 moved it
+│                         to checkout and back)
 └── svc-ledger.yaml       the second tenant, onboarded as the C-05 test
 ```
 
@@ -40,10 +41,12 @@ team, services inside it). The difference shows up the day ownership changes:
 | Handover of a service | move it to another namespace: redeploy, new image path, new Argo project | edit one line |
 | What "identity binds at one point" means | nothing much | the group is resolved in one place, and the Composition rebinds it everywhere |
 
-So: `svc-hello` is a System named `svc-hello`. The `checkout` team owns it —
-`payments` did until the C-06 move on 2026-09-16, and that move was one line in
-one file. A team may own any number of Systems; a System has exactly one owning
-team.
+So: `svc-hello` is a System named `svc-hello`. The `payments` team owns it —
+the C-06 test moved it to `checkout` on 2026-09-16 and back on 2026-09-17,
+and each move was one line in one file (*Moving a System between teams*
+below has what the first move did not do). `tenants/svc-hello.yaml` is always
+the live answer. A team may own any number of Systems; a System has exactly
+one owning team.
 There is no `Team` kind, no team namespace, no team-level cloud resources — a
 team *is* a Google Group and nothing else.
 
@@ -72,8 +75,8 @@ spec:
 ```
 
 Eleven lines. That is the C-05 measurement, and that is the whole of
-`tenants/svc-ledger.yaml` once you strip the 80 lines of explanatory comment
-the file also carries.
+`tenants/svc-ledger.yaml` once you strip the explanatory comment the file also
+carries.
 
 | Field | Means | Constraints |
 |---|---|---|
@@ -112,10 +115,11 @@ One file, one PR — preceded by two prerequisites that live outside this repo
 and are settled once, before the PR:
 
 1. Ask a Workspace admin to create the team's Google Group and nest it under
-   `gke-security-groups@thecloudgeek.io` — see the next section. Without it
-   the `RoleBinding` applies and binds to nobody. With the group in place, the
-   per-System Google service account and all four `ProjectIAMMember`s — the two
-   Cloud SQL login grants among them — reported `Synced=True` on the first
+   `gke-security-groups@thecloudgeek.io` — see *The one manual prerequisite*
+   below. Without it the `RoleBinding` applies and binds to nobody. With the
+   group in place, the per-System Google service account and all four
+   `ProjectIAMMember`s — the two Cloud SQL login grants among them — reported
+   `Synced=True` on the first
    reconcile on 2026-09-16 [C]. The Artifact Registry writer member, a
    different kind composed after the repository itself, is not part of that
    observation; it reached ready along with everything else by the time the
@@ -408,7 +412,9 @@ This repo is built out in **M2**.
 
 ## Status
 
-**Status:** M2 — live since 2026-09-16. Both tenants are synced and Ready.
+**Status:** M2 — built and exercised 2026-09-16/17; both tenants synced and
+reported Ready. The cluster was destroyed at the end of 2026-09-17 and the
+Cloud SQL instance parked, so nothing here is running today.
 `svc-hello` was the first System the platform ever composed (Ready 16:55:04);
 `svc-ledger` was onboarded as the C-05 test by merging one file (merge → Ready
 4m08s); `svc-hello` was then moved from `payments` to `checkout` as the C-06
