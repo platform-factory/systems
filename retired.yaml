@@ -1,0 +1,24 @@
+# System names that may not be used again yet (ADR-0017 §9, ADR-0019 §3).
+#
+# Why: the platform finds a System's cloud resources again by name. That is
+# what lets a rebuild adopt the old database instance instead of creating a
+# second one (ADR-0015 §2). It also means a NEW System that took a retired
+# name would adopt the old one's instances, registry and database user, and
+# its service account would log in as that user.
+#
+# How the list is used:
+# - The PR that removes tenants/<name>.yaml adds <name> here, in the same PR.
+#   The check (.github/workflows/check.yml) fails a PR that removes or
+#   renames a tenant file without doing so.
+# - A name comes off only after a person has deleted the last durable
+#   resource carrying it (ADR-0015 §5's runbook). The check does not police
+#   that step.
+# - Once the M2b engine is live, platform-config's charts/system reads this
+#   file and refuses to render a System whose name is on it.
+#
+# One name per line, with the date and PR in a comment, for example:
+#   - old-service   # retired 2026-10-01, PR #20
+#
+# This file sits at the repo root, never under tenants/: everything under
+# tenants/ is read as a tenant.
+retired: []

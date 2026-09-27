@@ -1,0 +1,11 @@
+apiVersion: platform.thecloudgeek.io/v1alpha1
+kind: System
+metadata:
+  name: svc-alpha
+spec:
+  owner:
+    team: team-a
+    repo: example-org/svc-alpha
+  tier: standard
+  securityTier: internal
+  size: XL
