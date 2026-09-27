@@ -11,6 +11,9 @@ tenants/                  the live tenants — one file each, synced by Argo CD
 ├── svc-hello.yaml        the first tenant; owned by payments (C-06 moved it
 │                         to checkout and back)
 └── svc-ledger.yaml       the second tenant, onboarded as the C-05 test
+retired.yaml              System names that may not be used again yet
+scripts/check_tenants.py  the pull-request check (see "The check" below)
+tests/check-fixtures/     inputs the check must refuse, and two it must pass
 ```
 
 Only `tenants/` is applied to the cluster. The `systems` Application — a child
@@ -301,6 +304,61 @@ instance rather than creating a second one — the Composition sets a
 deterministic `crossplane.io/external-name` derived from the System's name
 (ADR-0015 §2). That is the same mechanism that makes a cluster rebuild adopt
 instead of duplicate, which is also why a System's name is immutable.
+
+### Retiring the name
+
+Adoption by name has a second edge. A *new* System that took a removed
+System's name would adopt the old one's registry, database instances and
+database user, and its service account would log in as that user (ADR-0017
+§9). So a removed System's name is retired until its durable resources are
+gone:
+
+1. The PR that removes `tenants/<name>.yaml` adds `<name>` to
+   [`retired.yaml`](retired.yaml) in the same PR. The check below fails a PR
+   that removes or renames a tenant file without doing so.
+2. Once a person has deleted the last durable resource carrying the name
+   (ADR-0015 §5's runbook), a later PR takes the name off. The check does not
+   police this step.
+
+Bringing the *same* System back on purpose, so that it adopts its own data, is
+one PR that restores its file and takes its name off the list. The check
+prints a note whenever a name leaves the list, so the reviewer sees which case
+it is.
+
+`retired.yaml` sits at the repo root, never under `tenants/`, because
+everything under `tenants/` is read as a tenant. Once M2b's engine is live,
+`platform-config`'s `charts/system` also reads the list and refuses to render
+a System whose name is on it. Under that engine, removing a tenant will need
+one more step from a person: deleting the tenant's Argo CD Application
+(ADR-0019 §1). This README describes that step when the engine switches.
+
+## The check
+
+[`.github/workflows/check.yml`](.github/workflows/check.yml) runs
+[`scripts/check_tenants.py`](scripts/check_tenants.py) on every pull request
+and every push to `main`. It checks that:
+
+- `tenants/` holds only `*.yaml` files, and no subfolders;
+- each file is one `System`, with exactly `apiVersion`, `kind`, `metadata`
+  and `spec` at the top, and a file name equal to `metadata.name`;
+- the name and the five fields follow the System XRD's rules;
+- `retired.yaml` is well formed and names no System that still has a file;
+- on a pull request, every tenant file the PR removes or renames has its name
+  added to `retired.yaml`.
+
+Before it checks the repo, it runs itself against
+[`tests/check-fixtures/`](tests/check-fixtures). Each `must-fail` case has to
+be refused, by the rule its `expect` file names, and each `must-pass` case has
+to pass. A check that has never been seen to fail is not evidence (ADR-0019
+§4). To run it locally: `python3 scripts/check_tenants.py --self-test`, then
+`python3 scripts/check_tenants.py`.
+
+The check is advisory: a red result does not block a merge, because no repo in
+this org requires a passing check yet (ADR-0018 §7). Reserved and colliding
+System names (`argocd`, a name ending in `-system`, and the rest of ADR-0017
+§6's list) are deliberately not checked here. That list is kept in one place,
+`charts/system`'s schema in `platform-config`, which M2b builds. Until then,
+nothing refuses such a name.
 
 ## The one manual prerequisite
 

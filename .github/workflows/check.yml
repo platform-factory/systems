@@ -1,0 +1,66 @@
+# The systems repo's check (ADR-0017 §3; ADR-0019 §3 and §4).
+#
+# One job. It first proves the checker can fail, then checks the tenant files
+# and retired.yaml, and on a pull request also checks that every tenant file
+# the PR removes or renames has its name added to retired.yaml.
+#
+# Advisory: no repo in this org requires a passing check yet (ADR-0018 §7),
+# so a red result shows a mistake; it does not block the merge. What each rule
+# checks, and why, is at the top of scripts/check_tenants.py.
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tenants:
+    name: tenant files and the retired list
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history, so the pull request's base commit can be read.
+          fetch-depth: 0
+
+      # A check that has never been seen to fail is not evidence
+      # (ADR-0019 §4): svc-hello's old claim check passed 23 times without
+      # checking anything. So every known-bad fixture must be refused, by the
+      # rule it names, before this job's green result on the repo means
+      # anything.
+      - name: The checker refuses every known-bad fixture
+        run: python3 scripts/check_tenants.py --self-test
+
+      # On a pull_request event, actions/checkout checks out the merge of the
+      # PR into the base branch. That merge commit's first parent is the
+      # base-branch commit it was merged into, so comparing the two shows
+      # exactly what the PR removes, even if main has moved since the PR was
+      # opened.
+      - name: Copy the base branch's tenant files (pull requests only)
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -ne 3 ]; then
+            echo "::error::expected the pull request's merge commit to be checked out"
+            exit 1
+          fi
+          BASE_SHA="$(git rev-parse HEAD^1)"
+          mkdir -p "$RUNNER_TEMP/base"
+          git archive "$BASE_SHA" tenants | tar -x -C "$RUNNER_TEMP/base"
+          # retired.yaml arrived with this check, so an older base has none.
+          if git cat-file -e "$BASE_SHA:retired.yaml" 2>/dev/null; then
+            git show "$BASE_SHA:retired.yaml" > "$RUNNER_TEMP/base/retired.yaml"
+          fi
+
+      - name: Check the tenant files and retired.yaml
+        env:
+          IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+        run: |
+          if [ "$IS_PULL_REQUEST" = "true" ]; then
+            python3 scripts/check_tenants.py --base "$RUNNER_TEMP/base"
+          else
+            python3 scripts/check_tenants.py
+          fi
