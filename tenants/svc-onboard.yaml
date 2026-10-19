@@ -1,0 +1,25 @@
+# svc-onboard — the reference implementation's third tenant, and a
+# temporary one.
+#
+# This file is C-26's second test: "a new tenant is still one file", run on
+# the Config Connector engine. Nothing else in this repo, platform-config or
+# platform-bootstrap changes to onboard it. Its one prerequisite outside this
+# repo is its service repo, github.com/platform-factory/svc-onboard, with a
+# k8s/ directory on main; the checkout@thecloudgeek.io group already exists
+# (svc-ledger's team).
+#
+# `tier` is left out on purpose: it defaults to standard, and C-28 (b) needs
+# one tenant file that does not state it.
+#
+# It is offboarded, and its registry deleted by a person, in M2b's cleanup
+# (ADR-0015 §5, ADR-0019 §1).
+apiVersion: platform.thecloudgeek.io/v1alpha1
+kind: System
+metadata:
+  name: svc-onboard
+spec:
+  owner:
+    team: checkout
+    repo: platform-factory/svc-onboard
+  securityTier: internal
+  size: S
