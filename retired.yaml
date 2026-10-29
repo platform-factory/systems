@@ -23,3 +23,4 @@
 # tenants/ is read as a tenant.
 retired:
   - svc-onboard   # retired 2026-10-27, M2b cleanup (C-31's offboarding on the narrowed roles)
+  - svc-scratch   # retired 2026-10-29, C-31 (a): the scratch tenant offboarded on the narrowed roles
