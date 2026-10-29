@@ -21,4 +21,5 @@
 #
 # This file sits at the repo root, never under tenants/: everything under
 # tenants/ is read as a tenant.
-retired: []
+retired:
+  - svc-onboard   # retired 2026-10-27, M2b cleanup (C-31's offboarding on the narrowed roles)
