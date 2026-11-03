@@ -62,10 +62,11 @@ metadata:
   name: svc-ledger
 spec:
   owner:
-    # payments from 2026-11-03, for C-24 (ADR-0021 §14): two Systems of one team
-    # with one database each, before one of them moves team. The register named
+    # payments for C-24's fixture on 2026-11-03 (two Systems of one team, one
+    # database each), then back to checkout: that move is C-24's test, watched
+    # for what it does to svc-hello's grants (ADR-0021 §14). The register named
     # svc-onboard for this; it was retired in M2b, so svc-ledger stands in.
-    team: payments
+    team: checkout
     repo: platform-factory/svc-ledger
   tier: standard
   securityTier: internal
